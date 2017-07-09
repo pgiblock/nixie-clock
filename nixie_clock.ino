@@ -30,7 +30,7 @@ struct time_t
 };
 
 // Structure for maintaining button debounce state
-// Use with debounce_init and debounce_process below
+// Use with debounceInit and debounceProcess below
 struct debounce_t
 {
   int button_pin;
@@ -41,12 +41,8 @@ struct debounce_t
 
 enum mode_t
 {
-  MODE_YEAR,
-  MODE_MONTH,
-  MODE_DAY,
-  MODE_HOUR,
-  MODE_MINUTE,
-  MODE_SECOND,
+  MODE_TIME,
+  MODE_DATE,
   MODE_OFF,
   //MODE_RANDOM,
   MODE_NUM_MODES
@@ -68,6 +64,18 @@ static const byte xfade_seq[] = {
   0x03, 0x13, 0x0b, 0x1b, 0x07, 0x17, 0x0f, 0x1f
 };
 
+// Map digets to 4 bit nibbles. This could be 1:1, but we do mapping
+// in software to simplify the wiring. 0x0f is used to hide the digit.
+static const byte ones_digit_map[] = {
+  0x01, 0x00, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02,
+  0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f
+};
+
+static const byte tens_digit_map[] = {
+  0x01, 0x00, 0x03, 0x02, 0x0d, 0x0c, 0x09, 0x08, 0x05, 0x04,
+  0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f
+};
+
 // Convert normal decimal numbers to binary coded decimal
 byte decToBcd(byte val)
 {
@@ -78,6 +86,19 @@ byte decToBcd(byte val)
 byte bcdToDec(byte val)
 {
   return( (val/16*10) + (val%16) );
+}
+
+// Take a decimal 0-99, and return the byte for a single shift register
+// A value greater 99 blanks the digit
+byte valToReg(byte val)
+{
+  if (val >= 100) {
+    return 0xff;
+  } else {
+    byte tens = val / 10;
+    byte ones = val % 10;
+    return (tens_digit_map[tens] << 4) | (ones_digit_map[ones]);
+  }
 }
 
 // Set the DS3231's time
@@ -159,9 +180,39 @@ void writeEEPROM(uint8_t page, uint8_t entry, uint8_t data)
   //delay(10);
 }
 
+// Faster shiftOut
+// Arduino version has loop-invariant (on bit-order), and performs loop increment, shift, and conditional
+// Unroll the loop, assume MSB-First, and precalculate the bit masks.
+void fastShiftOut(int dataPin, int clockPin, byte data){
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B10000000);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B01000000);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00100000);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00010000);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00001000);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00000100);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00000010);
+  digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(dataPin, data & B00000001);
+  digitalWrite(clockPin, HIGH);
+}
+
 // 
 // TODO: Rename to Arduino camelCase "standard"
-void debounce_init(struct debounce_t *d, int pin)
+void debounceInit(struct debounce_t *d, int pin)
 {
   pinMode(pin, INPUT);
   d->button_pin = pin,
@@ -171,7 +222,7 @@ void debounce_init(struct debounce_t *d, int pin)
 }
 
 // TODO: Rename to Arduino camelCase "standard"
-bool debounce_process(struct debounce_t *d, unsigned int ms)
+bool debounceProcess(struct debounce_t *d, unsigned int ms)
 {
   int reading = digitalRead(d->button_pin);
   bool rv = false;
@@ -192,10 +243,41 @@ bool debounce_process(struct debounce_t *d, unsigned int ms)
   return rv;
 }
 
+int valueForMode(byte val[], int mode, time_t *t, unsigned int ms)
+{
+  //static unsigned int ms_at_random; // last time we pooped out a random number
+  //static int val_at_random;         // last random number pooped out
+  
+  switch (mode) {
+    case MODE_TIME:
+      val[0] = t->second;
+      val[1] = t->minute;
+      val[2] = t->hour;
+      return 0;
+    case MODE_DATE:
+      val[0] = t->year;
+      val[1] = t->dayOfMonth;
+      val[2] = t->month;
+      return 0;
+    case MODE_OFF:
+      val[0] = 100;
+      val[1] = 100;
+      val[2] = 100;
+      return 0;
+    /*case MODE_RANDOM:
+      if (ms > ms_at_random + 250) {
+        ms_at_random = ms;
+        val_at_random = rand() % 100;
+      }
+      return val_at_random;
+      */
+  }
+  return 1;
+}
 
 // Global State
-int prev_mode = MODE_SECOND;
-int mode = MODE_SECOND;
+int prev_mode = MODE_TIME;
+int mode = MODE_TIME;
 int state = STATE_DISPLAY;
 bool fading = true;
 bool xfade_buf[32];
@@ -214,46 +296,16 @@ void setup()
   pinMode(colonPin, OUTPUT);
   pinMode(faderPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
-  debounce_init(&modeButton, modeButtonPin);
-  debounce_init(&faderButton, faderButtonPin);
-}
-
-int value_for_mode(int mode, time_t *t, unsigned int ms)
-{
-  //static unsigned int ms_at_random; // last time we pooped out a random number
-  //static int val_at_random;         // last random number pooped out
-  
-  switch (mode) {
-    case MODE_YEAR:
-      return t->year;
-    case MODE_MONTH:
-      return t->month;
-    case MODE_DAY:
-      return t->dayOfMonth;
-    case MODE_HOUR:
-      return t->hour;
-    case MODE_MINUTE:
-      return t->minute;
-    case MODE_SECOND:
-      return t->second;
-    case MODE_OFF:
-      return 100;
-    /*case MODE_RANDOM:
-      if (ms > ms_at_random + 250) {
-        ms_at_random = ms;
-        val_at_random = rand() % 100;
-      }
-      return val_at_random;
-      */
-  }
+  debounceInit(&modeButton, modeButtonPin);
+  debounceInit(&faderButton, faderButtonPin);
 }
 
 void loop()
 {
-  static byte prev_second = 0;          // Previous second from RTC
-  static byte display_val = 100;        // Current Nixie display value
-  static byte prev_display_val = 100;   // What did we show on Nixies last?
-  static unsigned int ms_at_second = 0; // uC millis() at last RTC second rollover
+  static byte prev_second = 0;                        // Previous second from RTC
+  static byte display_val[3] = {100, 100, 100};       // Current Nixie display value
+  static byte prev_display_val[3] = {100, 100, 100};  // What did we show on Nixies last?
+  static unsigned int ms_at_second = 0;               // uC millis() at last RTC second rollover
   static bool colon_state = 0;
   static struct time_t t; // FIXME: static for now to avoid querying during xfade
   unsigned int ms;
@@ -269,6 +321,7 @@ void loop()
   if (t.second != prev_second) {
     colon_state = HIGH;
     digitalWrite(colonPin, HIGH);
+    digitalWrite(ledPin, HIGH);
 
     ms_at_second = ms;
   }
@@ -277,19 +330,20 @@ void loop()
   if (ms >= ms_at_second + 500) { // && colon_state == HIGH) {
     colon_state = LOW;
     digitalWrite(colonPin, LOW);
+    digitalWrite(ledPin, LOW);
   }
 
   // figure out what to display
   switch (state) {
     case STATE_DISPLAY:
-      display_val = value_for_mode(mode , &t, ms);
+      valueForMode(display_val, mode , &t, ms);
       break;
       
     case STATE_XFADE:
       if (xfade_buf[xfade_buf_idx]) {
-        display_val = value_for_mode(mode , &t, ms);
+        valueForMode(display_val, mode , &t, ms);
       } else {
-        display_val = value_for_mode(prev_mode , &t, ms);
+        valueForMode(display_val, prev_mode , &t, ms);
       }
 
       xfade_buf_idx++;
@@ -306,20 +360,15 @@ void loop()
 
   // Now update nixies if needed
   // TODO: Remove short-circuit
-  if (true || display_val != prev_display_val) {
-    byte out;
-    if (display_val >= 100) {
-      out = 0xff;
-    } else {
-      byte tens = display_val / 10;
-      byte ones = display_val % 10;
-      out = ((ones & 0x0f) << 4) | (tens & 0x0f);
-    }
+  // TODO: pre-store valToReg in display_Value
+  if (true /*|| memcmp display_val != prev_display_val*/) {
     digitalWrite(latchPin, LOW);
-    shiftOut(dataPin, clockPin, MSBFIRST, out);  
+    fastShiftOut(dataPin, clockPin, valToReg(display_val[0]));
+    fastShiftOut(dataPin, clockPin, valToReg(display_val[1]));
+    fastShiftOut(dataPin, clockPin, valToReg(display_val[2]));
     digitalWrite(latchPin, HIGH);
 
-    prev_display_val = display_val;
+    //memcpy(prev_display_val, display_val, sizeof(display_val));
   }
 
   if (fading) {
@@ -328,13 +377,20 @@ void loop()
     analogWrite(faderPin, 0);
   }
   
-  if (debounce_process(&modeButton, ms)) {
-    /*
-    time_t t = {second = 0, minute = 15, hour = 17,
-                dayOfWeed = 5, dayOfMonth = 9, month = 3, year = 17};
+  if (debounceProcess(&modeButton, ms)) {
+   /* {
+  byte second;
+  byte minute;
+  byte hour;
+  byte dayOfWeek;
+  byte dayOfMonth;
+  byte month;
+  byte year;
+};*/
+/*
+    time_t t = {0, 55, 10, 6, 8, 7, 17};
     setDS3231time(&t);
-    */
-       
+*/       
     prev_mode = mode;
     mode = (mode +1 ) % MODE_NUM_MODES;
     memset(&xfade_buf, 0, sizeof(xfade_buf));
@@ -343,7 +399,7 @@ void loop()
     state = STATE_XFADE;
   }
 
-  if (debounce_process(&faderButton, ms)) {
+  if (debounceProcess(&faderButton, ms)) {
     if(fading) {
       tone(buzzerPin, 1046); 
       fading = false;
