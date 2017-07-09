@@ -1,3 +1,8 @@
+/* 
+ * Arudino-based Nixie Clock.
+ * Copyright 2016-2017 Paul Giblock
+ */
+
 #include <Wire.h>
 
 // I2C address of the RTC
@@ -352,16 +357,20 @@ void loop()
   // Update RTC-uC sync
   if (t.second != prev_second) {
     colon_state = HIGH;
-    digitalWrite(colonPin, HIGH);
+    if (mode == MODE_TIME && state == STATE_DISPLAY) {
+      digitalWrite(colonPin, HIGH);
+    }
     digitalWrite(ledPin, HIGH);
-
+    
     ms_at_second = ms;
   }
 
   // Update colon at half-second
   if (ms >= ms_at_second + 500) { // && colon_state == HIGH) {
     colon_state = LOW;
-    digitalWrite(colonPin, LOW);
+    if (mode == MODE_TIME && state == STATE_DISPLAY) {
+      digitalWrite(colonPin, LOW);
+    }
     digitalWrite(ledPin, LOW);
   }
 
@@ -419,6 +428,7 @@ void loop()
     setDS3231time(&t);
 */
     changeMode((mode +1 ) % MODE_NUM_MODES);
+    digitalWrite(colonPin, LOW);
   }
 
   if (debounceProcess(&faderButton, ms)) {
