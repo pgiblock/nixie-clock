@@ -6,6 +6,7 @@
 #define AT24C32_I2C_ADDRESS   0x57
 
 // TODO: Make #define's
+int hvShutPin = 2;        // HV PSU shutoff pin (active low)
 int ledPin = 13;          // Built-in Nano v3 LED
 int faderPin = 3;         // Little PWM-controlled oscillator neon lamp
 int colonPin = 4;         // Blinking colon neon lamps
@@ -75,6 +76,17 @@ static const byte tens_digit_map[] = {
   0x01, 0x00, 0x03, 0x02, 0x0d, 0x0c, 0x09, 0x08, 0x05, 0x04,
   0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f
 };
+
+// Global State
+int prev_mode = MODE_OFF;
+int mode = MODE_OFF;
+int state = STATE_DISPLAY;
+bool fading = true;
+bool xfade_buf[32];
+unsigned int xfade_seq_idx;
+unsigned int xfade_buf_idx;
+debounce_t modeButton;
+debounce_t faderButton;
 
 // Convert normal decimal numbers to binary coded decimal
 byte decToBcd(byte val)
@@ -210,6 +222,15 @@ void fastShiftOut(int dataPin, int clockPin, byte data){
   digitalWrite(clockPin, HIGH);
 }
 
+void displayValue(byte value[])
+{
+  digitalWrite(latchPin, LOW);
+  fastShiftOut(dataPin, clockPin, valToReg(value[0]));
+  fastShiftOut(dataPin, clockPin, valToReg(value[1]));
+  fastShiftOut(dataPin, clockPin, valToReg(value[2]));
+  digitalWrite(latchPin, HIGH);
+}
+
 // 
 // TODO: Rename to Arduino camelCase "standard"
 void debounceInit(struct debounce_t *d, int pin)
@@ -275,20 +296,22 @@ int valueForMode(byte val[], int mode, time_t *t, unsigned int ms)
   return 1;
 }
 
-// Global State
-int prev_mode = MODE_TIME;
-int mode = MODE_TIME;
-int state = STATE_DISPLAY;
-bool fading = true;
-bool xfade_buf[32];
-unsigned int xfade_seq_idx;
-unsigned int xfade_buf_idx;
-debounce_t modeButton;
-debounce_t faderButton;
+void changeMode(int m)
+{
+  prev_mode = mode;
+  mode = m;
+  memset(&xfade_buf, 0, sizeof(xfade_buf));
+  xfade_seq_idx = 0;
+  xfade_buf_idx = 0;
+  state = STATE_XFADE;
+}
 
 void setup()
 {
+  static byte display_val[3] = {100, 100, 100};
+  
   Wire.begin();
+  pinMode(hvShutPin, OUTPUT);
   pinMode(ledPin, OUTPUT);
   pinMode(latchPin, OUTPUT);
   pinMode(clockPin, OUTPUT);
@@ -296,13 +319,21 @@ void setup()
   pinMode(colonPin, OUTPUT);
   pinMode(faderPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
+  pinMode(modeButtonPin, INPUT);
+  pinMode(faderButtonPin, INPUT);
   debounceInit(&modeButton, modeButtonPin);
   debounceInit(&faderButton, faderButtonPin);
+
+  // Init the shit registers before enabling the HV supply
+  displayValue(display_val);
+  digitalWrite(hvShutPin, LOW);
+  // Now queue the transition from OFF -> TIME
+  changeMode(MODE_TIME);
 }
 
 void loop()
 {
-  static byte prev_second = 0;                        // Previous second from RTC
+  static byte prev_second = 255;                      // Previous second from RTC (255 as imposible value to detect first loop)
   static byte display_val[3] = {100, 100, 100};       // Current Nixie display value
   static byte prev_display_val[3] = {100, 100, 100};  // What did we show on Nixies last?
   static unsigned int ms_at_second = 0;               // uC millis() at last RTC second rollover
@@ -312,7 +343,8 @@ void loop()
   static unsigned int fading_ms = 0;
 
   // Get RTC and uC clock as reference
-  if (state != STATE_XFADE) {
+  // Don't fetch during XFADE, but do fetch for first loop
+  if (state != STATE_XFADE || prev_second == 255) {
     readDS3231time(&t);
   }
   ms = millis();
@@ -362,12 +394,7 @@ void loop()
   // TODO: Remove short-circuit
   // TODO: pre-store valToReg in display_Value
   if (true /*|| memcmp display_val != prev_display_val*/) {
-    digitalWrite(latchPin, LOW);
-    fastShiftOut(dataPin, clockPin, valToReg(display_val[0]));
-    fastShiftOut(dataPin, clockPin, valToReg(display_val[1]));
-    fastShiftOut(dataPin, clockPin, valToReg(display_val[2]));
-    digitalWrite(latchPin, HIGH);
-
+    displayValue(display_val);
     //memcpy(prev_display_val, display_val, sizeof(display_val));
   }
 
@@ -390,13 +417,8 @@ void loop()
 /*
     time_t t = {0, 55, 10, 6, 8, 7, 17};
     setDS3231time(&t);
-*/       
-    prev_mode = mode;
-    mode = (mode +1 ) % MODE_NUM_MODES;
-    memset(&xfade_buf, 0, sizeof(xfade_buf));
-    xfade_seq_idx = 0;
-    xfade_buf_idx = 0;
-    state = STATE_XFADE;
+*/
+    changeMode((mode +1 ) % MODE_NUM_MODES);
   }
 
   if (debounceProcess(&faderButton, ms)) {
