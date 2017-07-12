@@ -13,8 +13,8 @@
 // TODO: Make #define's
 int hvShutPin = 2;        // HV PSU shutoff pin (active low)
 int ledPin = 13;          // Built-in Nano v3 LED
-int faderPin = 3;         // Little PWM-controlled oscillator neon lamp
-int colonPin = 4;         // Blinking colon neon lamps
+int colonBottomPin = 4;   // Blinking colon neon lamps
+int colonTopPin = 3;      // Blinking colon neon lamps
 int clockPin = 5;         // Shift-register clock
 int latchPin = 6;         // Shift-register latch (send to output)
 int dataPin = 7;          // Shift-register data
@@ -321,8 +321,8 @@ void setup()
   pinMode(latchPin, OUTPUT);
   pinMode(clockPin, OUTPUT);
   pinMode(dataPin, OUTPUT);
-  pinMode(colonPin, OUTPUT);
-  pinMode(faderPin, OUTPUT);
+  pinMode(colonTopPin, OUTPUT);
+  pinMode(colonBottomPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
   pinMode(modeButtonPin, INPUT);
   pinMode(faderButtonPin, INPUT);
@@ -358,7 +358,8 @@ void loop()
   if (t.second != prev_second) {
     colon_state = HIGH;
     if (mode == MODE_TIME && state == STATE_DISPLAY) {
-      digitalWrite(colonPin, HIGH);
+      digitalWrite(colonTopPin, HIGH);
+      digitalWrite(colonBottomPin, HIGH);
     }
     digitalWrite(ledPin, HIGH);
     
@@ -369,9 +370,16 @@ void loop()
   if (ms >= ms_at_second + 500) { // && colon_state == HIGH) {
     colon_state = LOW;
     if (mode == MODE_TIME && state == STATE_DISPLAY) {
-      digitalWrite(colonPin, LOW);
+      digitalWrite(colonTopPin, LOW);
+      digitalWrite(colonBottomPin, LOW);
     }
     digitalWrite(ledPin, LOW);
+  }
+
+  // TODO: Only do this once
+  if (mode == MODE_DATE && state == STATE_DISPLAY) {
+    digitalWrite(colonTopPin, LOW);
+    digitalWrite(colonBottomPin, HIGH);
   }
 
   // figure out what to display
@@ -407,11 +415,13 @@ void loop()
     //memcpy(prev_display_val, display_val, sizeof(display_val));
   }
 
+  /*
   if (fading) {
     analogWrite(faderPin, (cos(0.002f*(ms-fading_ms))+1.0f)*128);
   } else {
     analogWrite(faderPin, 0);
   }
+  */
   
   if (debounceProcess(&modeButton, ms)) {
    /* {
@@ -428,7 +438,8 @@ void loop()
     setDS3231time(&t);
 */
     changeMode((mode +1 ) % MODE_NUM_MODES);
-    digitalWrite(colonPin, LOW);
+    digitalWrite(colonBottomPin, LOW);
+    digitalWrite(colonTopPin, LOW);
   }
 
   if (debounceProcess(&faderButton, ms)) {
