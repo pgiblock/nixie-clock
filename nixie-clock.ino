@@ -10,17 +10,16 @@
 // I2C address of the AT24C32 EEPROM, which is NOT actually part of the DS3231, but rather the ZS-042 breakout board
 #define AT24C32_I2C_ADDRESS   0x57
 
-// TODO: Make #define's
-int hvShutPin = 2;        // HV PSU shutoff pin (active low)
-int ledPin = 13;          // Built-in Nano v3 LED
-int colonBottomPin = 4;   // Blinking colon neon lamps
-int colonTopPin = 3;      // Blinking colon neon lamps
-int clockPin = 5;         // Shift-register clock
-int latchPin = 6;         // Shift-register latch (send to output)
-int dataPin = 7;          // Shift-register data
-int buzzerPin = 10;       // Peizzo
-int modeButtonPin = 8;    // Change display mode button
-int faderButtonPin = 9;   // Toggle fader lamp button
+#define PIN_HV_SHUT           2   // HV PSU shutoff pin (active low)
+#define PIN_LED               13  // Built-in Nano v3 LED
+#define PIN_COLON_BOTTOM      4   // Blinking colon neon lamps
+#define PIN_COLON_TOP         3   // Blinking colon neon lamps
+#define PIN_CLOCK             5   // Shift-register clock
+#define PIN_LATCH             6   // Shift-register latch (send to output)
+#define PIN_DATA              7   // Shift-register data
+#define PIN_BUZZER            10  // Peizzo
+#define PIN_MODE_BUTTON       8   // Change display mode button
+#define PIN_FADER_BUTTON      9   // Toggle fader lamp button
 
 // Structure for representing time for DS3231 input and output
 // Use with setDS3231time and readDS3231time functions below
@@ -201,7 +200,6 @@ void writeEEPROM(uint8_t page, uint8_t entry, uint8_t data)
 // Arduino version has loop-invariant (on bit-order), and performs loop increment, shift, and conditional
 // Unroll the loop, assume MSB-First, and precalculate the bit masks.
 void fastShiftOut(int dataPin, int clockPin, byte data){
-  digitalWrite(clockPin, LOW);
   digitalWrite(dataPin, data & B10000000);
   digitalWrite(clockPin, HIGH);
   digitalWrite(clockPin, LOW);
@@ -225,15 +223,16 @@ void fastShiftOut(int dataPin, int clockPin, byte data){
   digitalWrite(clockPin, LOW);
   digitalWrite(dataPin, data & B00000001);
   digitalWrite(clockPin, HIGH);
+  digitalWrite(clockPin, LOW);
 }
 
 void displayValue(byte value[])
 {
-  digitalWrite(latchPin, LOW);
-  fastShiftOut(dataPin, clockPin, valToReg(value[0]));
-  fastShiftOut(dataPin, clockPin, valToReg(value[1]));
-  fastShiftOut(dataPin, clockPin, valToReg(value[2]));
-  digitalWrite(latchPin, HIGH);
+  digitalWrite(PIN_LATCH, LOW);
+  fastShiftOut(PIN_DATA, PIN_CLOCK, valToReg(value[0]));
+  fastShiftOut(PIN_DATA, PIN_CLOCK, valToReg(value[1]));
+  fastShiftOut(PIN_DATA, PIN_CLOCK, valToReg(value[2]));
+  digitalWrite(PIN_LATCH, HIGH);
 }
 
 // 
@@ -316,22 +315,22 @@ void setup()
   static byte display_val[3] = {100, 100, 100};
   
   Wire.begin();
-  pinMode(hvShutPin, OUTPUT);
-  pinMode(ledPin, OUTPUT);
-  pinMode(latchPin, OUTPUT);
-  pinMode(clockPin, OUTPUT);
-  pinMode(dataPin, OUTPUT);
-  pinMode(colonTopPin, OUTPUT);
-  pinMode(colonBottomPin, OUTPUT);
-  pinMode(buzzerPin, OUTPUT);
-  pinMode(modeButtonPin, INPUT);
-  pinMode(faderButtonPin, INPUT);
-  debounceInit(&modeButton, modeButtonPin);
-  debounceInit(&faderButton, faderButtonPin);
+  pinMode(PIN_HV_SHUT, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_LATCH, OUTPUT);
+  pinMode(PIN_CLOCK, OUTPUT);
+  pinMode(PIN_DATA, OUTPUT);
+  pinMode(PIN_COLON_TOP, OUTPUT);
+  pinMode(PIN_COLON_BOTTOM, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_MODE_BUTTON, INPUT);
+  pinMode(PIN_FADER_BUTTON, INPUT);
+  debounceInit(&modeButton, PIN_MODE_BUTTON);
+  debounceInit(&faderButton, PIN_FADER_BUTTON);
 
   // Init the shit registers before enabling the HV supply
   displayValue(display_val);
-  digitalWrite(hvShutPin, LOW);
+  digitalWrite(PIN_HV_SHUT, LOW);
   // Now queue the transition from OFF -> TIME
   changeMode(MODE_TIME);
 }
@@ -358,10 +357,10 @@ void loop()
   if (t.second != prev_second) {
     colon_state = HIGH;
     if (mode == MODE_TIME && state == STATE_DISPLAY) {
-      digitalWrite(colonTopPin, HIGH);
-      digitalWrite(colonBottomPin, HIGH);
+      digitalWrite(PIN_COLON_TOP, HIGH);
+      digitalWrite(PIN_COLON_BOTTOM, HIGH);
     }
-    digitalWrite(ledPin, HIGH);
+    digitalWrite(PIN_LED, HIGH);
     
     ms_at_second = ms;
   }
@@ -370,16 +369,16 @@ void loop()
   if (ms >= ms_at_second + 500) { // && colon_state == HIGH) {
     colon_state = LOW;
     if (mode == MODE_TIME && state == STATE_DISPLAY) {
-      digitalWrite(colonTopPin, LOW);
-      digitalWrite(colonBottomPin, LOW);
+      digitalWrite(PIN_COLON_TOP, LOW);
+      digitalWrite(PIN_COLON_BOTTOM, LOW);
     }
-    digitalWrite(ledPin, LOW);
+    digitalWrite(PIN_LED, LOW);
   }
 
   // TODO: Only do this once
   if (mode == MODE_DATE && state == STATE_DISPLAY) {
-    digitalWrite(colonTopPin, LOW);
-    digitalWrite(colonBottomPin, HIGH);
+    digitalWrite(PIN_COLON_TOP, LOW);
+    digitalWrite(PIN_COLON_BOTTOM, HIGH);
   }
 
   // figure out what to display
@@ -438,22 +437,22 @@ void loop()
     setDS3231time(&t);
 */
     changeMode((mode +1 ) % MODE_NUM_MODES);
-    digitalWrite(colonBottomPin, LOW);
-    digitalWrite(colonTopPin, LOW);
+    digitalWrite(PIN_COLON_BOTTOM, LOW);
+    digitalWrite(PIN_COLON_TOP, LOW);
   }
 
   if (debounceProcess(&faderButton, ms)) {
     if(fading) {
-      tone(buzzerPin, 1046); 
+      tone(PIN_BUZZER, 1046); 
       fading = false;
     } else {
-      tone(buzzerPin, 880);
+      tone(PIN_BUZZER, 880);
       fading = true;
     }
     fading_ms = ms;
   }
   if (ms >= fading_ms + 150) {
-    noTone(buzzerPin); 
+    noTone(PIN_BUZZER); 
   }
   
   prev_second = t.second;
